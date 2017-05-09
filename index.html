@@ -134,22 +134,17 @@ library(doParallel)</code></pre>
 </div>
 <div id="reading-and-processing-data" class="section level3">
 <h3>1. Reading and Processing data</h3>
-<p>After the files are downloaded, we load the csv files</p>
+<p>After the files are downloaded, the data is loaded</p>
 <pre class="r"><code># Read in data
 dataRaw &lt;- read.csv(&quot;./train.csv&quot;, header = T, row.names = 1)
 quiz &lt;- read.csv(&quot;./test.csv&quot;, header = T, row.names = 1)</code></pre>
-<p>Here I worked to remove columns with greater than 90% missing values using matrix operations. By looking at the quiz data, I found that variables which were removed in the quiz set remained in the test set. I identified common strings in these columns and used regular expressions to eliminate them. Finally, I eliminate columns 1 through</p>
+<p>Here I worked to remove columns with greater than 90% missing values using matrix operations. By looking at the quiz data, I found that variables which were removed in the quiz set remained in the test set. I identified common strings in these columns and used regular expressions to eliminate them. Finally, I eliminated columns 1 through 6, as they contain ID variables which will not be useful for prediction.</p>
 <pre class="r"><code># Remove columns with more than 90% missing values in both data sets
 dataSub &lt;- dataRaw[, colSums(is.na(dataRaw)) &lt; nrow(dataRaw) * .90]
 quizSub &lt;- quiz[, colSums(is.na(quiz)) &lt; nrow(quiz) * .90]
 
-# We see that more rows were removed from the quiz set, as some rows contained
-# all blank values. use grepl and regular expressions to remove those columns 
-# in the dataSub data frame
 dataSub &lt;- dataSub[, !grepl((&quot;kurtosis|skewness|^max|^min|amplitude&quot;), colnames(dataSub))]
 
-# Remove the first 6 columns from both data frames as they contain individual/time
-# specific data which will not be helpful in identifying workout quality
 dataSub &lt;-dataSub[,-(1:6)]
 quizSub &lt;- quizSub[,-(1:6)]</code></pre>
 </div>
@@ -169,7 +164,7 @@ inTrain &lt;- createDataPartition(y = buildData$classe, p = 0.7, list = F)
 
 training &lt;- buildData[inTrain,]
 testing &lt;- buildData[-inTrain,]</code></pre>
-<p>After I split up the data into the appropriate sets, I identified highly correlated variables in the training set, and eliminate appropriate variables using findCorrelation in caret</p>
+<p>After I split up the data into the appropriate sets, I identified highly correlated variables in the training set, and eliminated appropriate variables using findCorrelation in caret</p>
 <pre class="r"><code>#### Look for highly correlated variables in training set
 trainingCor &lt;- cor(training[,-53])
 
@@ -181,13 +176,13 @@ training &lt;- training[, -highCor]
 testing &lt;- testing[,-highCor]
 validation &lt;- validation[,-highCor]
 quizSub &lt;- quizSub[,-highCor]</code></pre>
-<p>After removing the correlated variables from all data sets, my total number of predictors is now 45.</p>
+<p>After removing the correlated variables from all data sets, there were 44 predictors for all data sets.</p>
 </div>
 <div id="testing-algorithms" class="section level3">
 <h3>3. Testing Algorithms</h3>
 <div id="random-forrest" class="section level4">
 <h4>Random Forrest</h4>
-<p>First I test random forrest, using crossvalidation with 15-fold sampling</p>
+<p>My Random forrest model was set up using cross validation with 15-fold sampling</p>
 <pre class="r"><code># 15-fold CV
 # 392s - 98.91%
 set.seed(828)
@@ -207,7 +202,7 @@ confusionMatrix(rfMod)</code></pre>
 ##          E  0.0  0.0  0.0  0.0 18.3
 ##                             
 ##  Accuracy (average) : 0.9891</code></pre>
-<p>We can see that the in sample accuracy for this model is 98.73%</p>
+<p>The in sample accuracy for Random forrest was 98.73%</p>
 </div>
 <div id="random-forrest-out-of-sample-error" class="section level4">
 <h4>Random Forrest Out of Sample Error</h4>
@@ -244,11 +239,11 @@ confusionMatrix(table(rfPredict, testing$classe))</code></pre>
 ## Detection Rate         0.2841   0.1916   0.1712   0.1622   0.1821
 ## Detection Prevalence   0.2851   0.1938   0.1744   0.1642   0.1826
 ## Balanced Accuracy      0.9989   0.9936   0.9890   0.9937   0.9951</code></pre>
-<p>The out of sample accuracy for Random Forrest is 99.13%, so we can expect the out of sample error to be .87%</p>
+<p>The out of sample accuracy for Random Forrest is 99.13%. The estimated out-of-sample error for the random forrest model is therefore .87%</p>
 </div>
 <div id="generalized-boosting-model" class="section level4">
 <h4>Generalized Boosting Model</h4>
-<p>We setup a gbm model with an interaction depth of 10, and n.tree = 250, utilizing a crossvalidation with 10 folds</p>
+<p>The GBM model was set up with an interaction depth of 10, and n.tree = 250, utilizing cross validation with 10 folds</p>
 <pre class="r"><code>set.seed(838)
 gbmMod &lt;- train(classe~., method = &quot;gbm&quot;, data = training, verbose = F, trControl = gbmControl, tuneGrid = gbmGrid)
 
@@ -266,7 +261,7 @@ confusionMatrix(gbmMod)</code></pre>
 ##          E  0.0  0.0  0.0  0.1 18.2
 ##                             
 ##  Accuracy (average) : 0.9893</code></pre>
-<p>We can see that the gbm model achieves a slightly higher accuracy than random forrest with 98.93% accuracy.</p>
+<p>The GBM model achieved a slightly higher accuracy than random forrest with 98.93% in sample accuracy.</p>
 </div>
 <div id="gbm-out-of-sample-error-rate" class="section level4">
 <h4>GBM out of sample error rate</h4>
@@ -303,12 +298,12 @@ confusionMatrix(table(gbmPredict, testing$classe))</code></pre>
 ## Detection Rate         0.2836   0.1914   0.1717   0.1625   0.1824
 ## Detection Prevalence   0.2844   0.1945   0.1751   0.1634   0.1826
 ## Balanced Accuracy      0.9982   0.9924   0.9903   0.9950   0.9959</code></pre>
-<p>The accuracy for the gbm model on the test set is 99.15%, so we can expect the out of sample error rate to be .85%. As we would expect from the in sample results, the GBM slightly outperforms random forrest.</p>
+<p>The accuracy for the gbm model on the test set was 99.15%. The estimated out of sample error rate is therefore .85%. As expected from the in sample results, the GBM slightly outperformed random forrest.</p>
 </div>
 </div>
 <div id="combined-random-forrest-and-gbm" class="section level3">
 <h3>4. Combined Random Forrest and GBM</h3>
-<p>In order to create the combined model, we use predictions on the test set from both models created in step three, and create a new data frame for the combined model. I use a random forrest model with traditional bootstrapping for the combined model.</p>
+<p>In order to create the combined model, I created a new data frame for the combined model using predictions from both models on the test set, as well as the classe values for the test set. I used a random forrest model with traditional bootstrapping for the combined model.</p>
 <div id="creating-combined-model" class="section level4">
 <h4>Creating Combined model</h4>
 <pre class="r"><code># create data frame to stack boost/rf models
@@ -318,8 +313,8 @@ combined &lt;- data.frame(rfPredict, gbmPredict, classe = testing$classe)
 set.seed(848)
 comboMod &lt;- train(classe~., method = &quot;rf&quot;, data = combined, allowParallel = T)</code></pre>
 </div>
-<div id="running-combined-model-validation-set" class="section level4">
-<h4>Running Combined Model Validation set</h4>
+<div id="predicting-on-validation-set-with-the-combined-model" class="section level4">
+<h4>Predicting on Validation set with the Combined Model</h4>
 <pre class="r"><code># Predict values for validation set using RF and GBM models from step 3
 rfValPred &lt;- predict(rfMod, validation)
 gbmValPred &lt;- predict(gbmMod, validation)
@@ -362,7 +357,7 @@ confusionMatrix(table(validationPredict, validation$classe))</code></pre>
 ## Detection Rate         0.2836   0.1929   0.1716   0.1628   0.1830
 ## Detection Prevalence   0.2838   0.1959   0.1733   0.1640   0.1830
 ## Balanced Accuracy      0.9984   0.9963   0.9912   0.9962   0.9977</code></pre>
-<p>The combined model achieves 99.39% out of sample accuracy, so I expect the out of sample error-rate to be 0.61%. This is better than either model individually, so we will use this model to predict the quiz values</p>
+<p>The combined model achieved 99.39% out of sample accuracy. The estimated out of sample error-rate is therefore 0.61%. The combined model was more accurate than either model individually, so I chose to use it to predict the quiz values</p>
 </div>
 </div>
 <div id="predicting-on-the-quiz-data" class="section level3">

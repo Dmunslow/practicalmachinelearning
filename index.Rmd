@@ -40,7 +40,7 @@ rm(testURL)
 
 ```
 
-After the files are downloaded, we load the csv files
+After the files are downloaded, the data is loaded
 ```{r readFiles, cache=TRUE}
 # Read in data
 dataRaw <- read.csv("./train.csv", header = T, row.names = 1)
@@ -51,19 +51,14 @@ quiz <- read.csv("./test.csv", header = T, row.names = 1)
 
 Here I worked to remove columns with greater than 90% missing values using matrix operations. By looking at the quiz data, I found that
 variables which were removed in the quiz set remained in the test set.  I identified common strings in these columns
-and used regular expressions to eliminate them. Finally, I eliminate columns 1 through 
+and used regular expressions to eliminate them. Finally, I eliminated columns 1 through 6, as they contain ID variables which will not be useful for prediction.
 ```{r featureSelection, cache= T}
 # Remove columns with more than 90% missing values in both data sets
 dataSub <- dataRaw[, colSums(is.na(dataRaw)) < nrow(dataRaw) * .90]
 quizSub <- quiz[, colSums(is.na(quiz)) < nrow(quiz) * .90]
 
-# We see that more rows were removed from the quiz set, as some rows contained
-# all blank values. use grepl and regular expressions to remove those columns 
-# in the dataSub data frame
 dataSub <- dataSub[, !grepl(("kurtosis|skewness|^max|^min|amplitude"), colnames(dataSub))]
 
-# Remove the first 6 columns from both data frames as they contain individual/time
-# specific data which will not be helpful in identifying workout quality
 dataSub <-dataSub[,-(1:6)]
 quizSub <- quizSub[,-(1:6)]
 
@@ -90,7 +85,7 @@ testing <- buildData[-inTrain,]
 ```
 
 After I split up the data into the appropriate sets, I identified highly correlated
-variables in the training set, and eliminate appropriate variables using findCorrelation in caret
+variables in the training set, and eliminated appropriate variables using findCorrelation in caret
 ```{r corr, cache = TRUE}
 #### Look for highly correlated variables in training set
 trainingCor <- cor(training[,-53])
@@ -105,7 +100,7 @@ validation <- validation[,-highCor]
 quizSub <- quizSub[,-highCor]
 ```
 
-After removing the correlated variables from all data sets, my total number of predictors is now 45.
+After removing the correlated variables from all data sets, there were 44 predictors for all data sets.
 
 ### 3. Testing Algorithms
 ```{r rfSetup, echo = FALSE}
@@ -121,7 +116,7 @@ rfControl <- trainControl(method = "cv", number = 15, allowParallel = TRUE)
 
 #### Random Forrest
 
-First I test random forrest, using crossvalidation with 15-fold sampling
+My Random forrest model was set up using cross validation with 15-fold sampling
 ```{r rfModel, cache = T}
 
 # 15-fold CV
@@ -136,7 +131,7 @@ confusionMatrix(rfMod)
 stopCluster(cluster)
 registerDoSEQ()
 ```
-We can see that the in sample accuracy for this model is 98.73%
+The in sample accuracy for Random forrest was 98.73%
 
 #### Random Forrest Out of Sample Error
 ```{r rfTest, cache = T}
@@ -144,7 +139,7 @@ We can see that the in sample accuracy for this model is 98.73%
 rfPredict <- predict(rfMod, testing)
 confusionMatrix(table(rfPredict, testing$classe))
 ```
-The out of sample accuracy for Random Forrest is 99.13%, so we can expect the out of sample error to be .87%
+The out of sample accuracy for Random Forrest is 99.13%. The estimated out-of-sample error for the random forrest model is therefore .87%
 
 #### Generalized Boosting Model
 
@@ -157,7 +152,7 @@ gbmGrid <- expand.grid(interaction.depth = (1:5) *2, n.trees = (1:10)*25, shrink
 
 ```
 
-We setup a gbm model with an interaction depth of 10, and n.tree = 250, utilizing a crossvalidation with 10 folds
+The GBM model was set up with an interaction depth of 10, and n.tree = 250, utilizing cross validation with 10 folds
 ```{r gbmModel, cache = T}
 
 set.seed(838)
@@ -165,7 +160,8 @@ gbmMod <- train(classe~., method = "gbm", data = training, verbose = F, trContro
 
 confusionMatrix(gbmMod)
 ```
-We can see that the gbm model achieves a slightly higher accuracy than random forrest with 98.93% accuracy.
+The GBM model achieved a slightly higher accuracy than random forrest with 98.93% in sample accuracy.
+
 ```{r endParGBM, echo = F}
 stopCluster(cluster)
 registerDoSEQ()
@@ -176,11 +172,11 @@ registerDoSEQ()
 gbmPredict <- predict(gbmMod, testing)
 confusionMatrix(table(gbmPredict, testing$classe))
 ```
-The accuracy for the gbm model on the test set is 99.15%, so we can expect the out of sample error rate to be .85%.  As we would expect from the in sample results, the GBM slightly outperforms random forrest.
+The accuracy for the gbm model on the test set was 99.15%. The estimated out of sample error rate is therefore .85%.  As expected from the in sample results, the GBM slightly outperformed random forrest.
 
 
 ### 4. Combined Random Forrest and GBM
-In order to create the combined model, we use predictions on the test set from both models created in step three, and create a new data frame for the combined model. I use a random forrest model with traditional bootstrapping for the combined model.
+In order to create the combined model, I created a new data frame for the combined model using predictions from both models on the test set, as well as the classe values for the test set. I used a random forrest model with traditional bootstrapping for the combined model.
 
 ```{r comboModSetup, echo = F}
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
@@ -205,7 +201,7 @@ stopCluster(cluster)
 registerDoSEQ()
 ```
 
-#### Running Combined Model Validation set
+#### Predicting on Validation set with the Combined Model
 
 ```{r validation, cache = TRUE}
 
@@ -223,7 +219,7 @@ confusionMatrix(table(validationPredict, validation$classe))
 
 ```
 
-The combined model achieves 99.39% out of sample accuracy, so I expect the out of sample error-rate to be 0.61%.  This is better than either model individually, so we will use this model to predict the quiz values
+The combined model achieved 99.39% out of sample accuracy. The estimated out of sample error-rate is therefore 0.61%.  The combined model was more accurate than either model individually, so I chose to use it to predict the quiz values
 
 
 ### 5. Predicting on the quiz data
