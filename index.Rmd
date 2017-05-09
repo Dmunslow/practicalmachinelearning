@@ -6,25 +6,241 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+```{r libraries, message=FALSE}
+library(caret)
+library(gbm)
+library(randomForest)
+library(parallel)
+library(doParallel)
+```
+### Intro
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+For the course project, I will explore the accuracy of boosting and random forrest
+models, as they have been identified as having the greatest predictive power.  I 
+will also explore whether a combined model of gbm and rf provides superior accuracy to either individually.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+### 1. Reading and Processing data
+```{r downloadFiles, echo=F, cache=T, message=FALSE, warning=FALSE}
+trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
 
-```{r cars}
-summary(cars)
+if(!file.exists("./train.csv")){
+    download.file(trainURL, "./train.csv")
+}
+
+if(!file.exists("./test.csv")){
+    download.file(testURL, "./test.csv")
+}
+rm(trainURL)
+rm(testURL)
+
 ```
 
-## Including Plots
+After the files are downloaded, we load the csv files
+```{r readFiles, cache=TRUE}
+# Read in data
+dataRaw <- read.csv("./train.csv", header = T, row.names = 1)
+quiz <- read.csv("./test.csv", header = T, row.names = 1)
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+Here I worked to remove columns with greater than 90% missing values using matrix operations. By looking at the quiz data, I found that
+variables which were removed in the quiz set remained in the test set.  I identified common strings in these columns
+and used regular expressions to eliminate them. Finally, I eliminate columns 1 through 
+```{r featureSelection, cache= T}
+# Remove columns with more than 90% missing values in both data sets
+dataSub <- dataRaw[, colSums(is.na(dataRaw)) < nrow(dataRaw) * .90]
+quizSub <- quiz[, colSums(is.na(quiz)) < nrow(quiz) * .90]
+
+# We see that more rows were removed from the quiz set, as some rows contained
+# all blank values. use grepl and regular expressions to remove those columns 
+# in the dataSub data frame
+dataSub <- dataSub[, !grepl(("kurtosis|skewness|^max|^min|amplitude"), colnames(dataSub))]
+
+# Remove the first 6 columns from both data frames as they contain individual/time
+# specific data which will not be helpful in identifying workout quality
+dataSub <-dataSub[,-(1:6)]
+quizSub <- quizSub[,-(1:6)]
+
+```
+
+### 2. Subsetting Train/Test/Validation sets
+In this section, I split my data into train, test and validation sets
+```{r dataSubset , cache = TRUE}
+
+set.seed(808)
+# subset data into validation and build subsets
+inBuild <-createDataPartition(y = dataSub$classe, p = 0.7, list = F)
+
+validation <- dataSub[-inBuild,]
+buildData <- dataSub[inBuild,]
+
+set.seed(818)
+# Subset build data into train and test sets
+inTrain <- createDataPartition(y = buildData$classe, p = 0.7, list = F)
+
+training <- buildData[inTrain,]
+testing <- buildData[-inTrain,]
+
+```
+
+After I split up the data into the appropriate sets, I identified highly correlated
+variables in the training set, and eliminate appropriate variables using findCorrelation in caret
+```{r corr, cache = TRUE}
+#### Look for highly correlated variables in training set
+trainingCor <- cor(training[,-53])
+
+# Create index with columns with high (>0.9) correlation
+highCor <- findCorrelation(trainingCor, 0.9)
+
+# Remove columns with correlation higher than .9 for all data
+training <- training[, -highCor]
+testing <- testing[,-highCor]
+validation <- validation[,-highCor]
+quizSub <- quizSub[,-highCor]
+```
+
+After removing the correlated variables from all data sets, my total number of predictors is now 45.
+
+### 3. Testing Algorithms
+```{r rfSetup, echo = FALSE}
+
+# Setup Parallel Processing 
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+# Set up the train function to use 10-fold cross validation with parallel processing
+rfControl <- trainControl(method = "cv", number = 15, allowParallel = TRUE)
+
+```
+
+#### Random Forrest
+
+First I test random forrest, using crossvalidation with 15-fold sampling
+```{r rfModel, cache = T}
+
+# 15-fold CV
+# 392s - 98.91%
+set.seed(828)
+rfMod <- train(classe~., data = training, method="rf", trControl = rfControl)
+
+confusionMatrix(rfMod)
+```
+
+```{r endParRF, echo = F}
+stopCluster(cluster)
+registerDoSEQ()
+```
+We can see that the in sample accuracy for this model is 98.73%
+
+#### Random Forrest Out of Sample Error
+```{r rfTest, cache = T}
+
+rfPredict <- predict(rfMod, testing)
+confusionMatrix(table(rfPredict, testing$classe))
+```
+The out of sample accuracy for Random Forrest is 99.13%, so we can expect the out of sample error to be .87%
+
+#### Generalized Boosting Model
+
+```{r gbmSetup, echo = F}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+gbmControl <- trainControl(method = "cv", allowParallel = TRUE)
+gbmGrid <- expand.grid(interaction.depth = (1:5) *2, n.trees = (1:10)*25, shrinkage = .1, n.minobsinnode = 10)
+
+```
+
+We setup a gbm model with an interaction depth of 10, and n.tree = 250, utilizing a crossvalidation with 10 folds
+```{r gbmModel, cache = T}
+
+set.seed(838)
+gbmMod <- train(classe~., method = "gbm", data = training, verbose = F, trControl = gbmControl, tuneGrid = gbmGrid)
+
+confusionMatrix(gbmMod)
+```
+We can see that the gbm model achieves a slightly higher accuracy than random forrest with 98.93% accuracy.
+```{r endParGBM, echo = F}
+stopCluster(cluster)
+registerDoSEQ()
+```
+#### GBM out of sample error rate
+```{r gbmTest, cache = T}
+
+gbmPredict <- predict(gbmMod, testing)
+confusionMatrix(table(gbmPredict, testing$classe))
+```
+The accuracy for the gbm model on the test set is 99.15%, so we can expect the out of sample error rate to be .85%.  As we would expect from the in sample results, the GBM slightly outperforms random forrest.
+
+
+### 4. Combined Random Forrest and GBM
+In order to create the combined model, we use predictions on the test set from both models created in step three, and create a new data frame for the combined model. I use a random forrest model with traditional bootstrapping for the combined model.
+
+```{r comboModSetup, echo = F}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+```
+
+#### Creating Combined model
+
+```{r comboMod, cache = TRUE}
+
+# create data frame to stack boost/rf models
+combined <- data.frame(rfPredict, gbmPredict, classe = testing$classe)
+
+# Set seed an run random forrest model using combined dataframe
+set.seed(848)
+comboMod <- train(classe~., method = "rf", data = combined, allowParallel = T)
+
+```
+```{r endParCombo, echo = F}
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+#### Running Combined Model Validation set
+
+```{r validation, cache = TRUE}
+
+# Predict values for validation set using RF and GBM models from step 3
+rfValPred <- predict(rfMod, validation)
+gbmValPred <- predict(gbmMod, validation)
+
+# Create dataframe with validation estimates for each model
+valDF <- data.frame(rfPredict = rfValPred, gbmPredict= gbmValPred)
+
+# Use combined model to predict values for validation data frame
+validationPredict <- predict(comboMod, valDF)
+
+confusionMatrix(table(validationPredict, validation$classe))
+
+```
+
+The combined model achieves 99.39% out of sample accuracy, so I expect the out of sample error-rate to be 0.61%.  This is better than either model individually, so we will use this model to predict the quiz values
+
+
+### 5. Predicting on the quiz data
+Using the same methods as in the previous step, I created a dataframe with predicted values for the quizSub data set created in step 1
+```{r quizData, cache = TRUE}
+
+# Create quiz predictions
+rfQuizPred <- predict(rfMod, quizSub)
+gbmQuizPred <- predict(gbmMod, quizSub)
+
+# create quiz data frame
+quizDF <- data.frame(rfPredict = rfQuizPred, gbmPredict = gbmQuizPred)
+
+# Predict quiz values using combined model
+quizPredict <- predict(comboMod, quizDF)
+
+#print quiz values
+quizPredict
+
+```
